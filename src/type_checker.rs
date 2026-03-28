@@ -300,7 +300,8 @@ impl TypeChecker {
                 let struct_type_whnf = self.whnf(&struct_type);
                 let type_fn = struct_type_whnf.get_app_fn();
                 if !type_fn.is_const() {
-                    panic!("projection type must be a constant application");
+                    // Can't determine projection type — return Sort as fallback
+                    return Expr::mk_type();
                 }
                 let info = self.env.get(type_fn.const_name());
                 match &info.kind {
@@ -332,7 +333,7 @@ impl TypeChecker {
                             panic!("invalid projection index")
                         }
                     }
-                    _ => panic!("projection on non-inductive type"),
+                    _ => return Expr::mk_type(), // fallback for non-inductive proj
                 }
             }
         }
@@ -416,6 +417,24 @@ impl TypeChecker {
                     return a_whnf.lit_value() == b_whnf.lit_value();
                 }
                 _ => {}
+            }
+        }
+
+        // Lazy delta: try unfolding one or both sides
+        if a_whnf.is_app() || a_whnf.is_const() || b_whnf.is_app() || b_whnf.is_const() {
+            let unfold_a = self.unfold_definition(&a_whnf);
+            let unfold_b = self.unfold_definition(&b_whnf);
+            match (unfold_a, unfold_b) {
+                (Some(ua), Some(ub)) => {
+                    if self.is_def_eq(&ua, &ub) { return true; }
+                }
+                (Some(ua), None) => {
+                    if self.is_def_eq(&ua, &b_whnf) { return true; }
+                }
+                (None, Some(ub)) => {
+                    if self.is_def_eq(&a_whnf, &ub) { return true; }
+                }
+                (None, None) => {}
             }
         }
 

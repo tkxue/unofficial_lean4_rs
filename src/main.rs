@@ -37,6 +37,13 @@ fn main() {
             "--print-libdir" => print_libdir = true,
             "--repl" => repl_mode = true,
             "--verify" => verify = true,
+            "--check-export" => {
+                // Lean Kernel Arena mode: read NDJSON from stdin, check, exit 0/1/2
+                let stdin = io::stdin();
+                let mut reader = io::BufReader::new(stdin.lock());
+                let code = lean4_kernel::export::check_export(&mut reader);
+                std::process::exit(code);
+            }
             "--run" => {
                 run_mode = true;
                 i += 1;
@@ -98,6 +105,16 @@ fn main() {
 
     // Handle file mode
     if let Some(ref path) = file {
+        // If it's an NDJSON export file, use the export checker
+        if path.ends_with(".ndjson") {
+            let f = std::fs::File::open(path).unwrap_or_else(|e| {
+                eprintln!("error: {}: {}", path, e); std::process::exit(1);
+            });
+            let mut reader = io::BufReader::new(f);
+            let code = lean4_kernel::export::check_export(&mut reader);
+            std::process::exit(code);
+        }
+
         let t0 = Instant::now();
 
         if print_deps {
@@ -127,6 +144,14 @@ fn main() {
 
         if print_stats {
             println!("constants: {}", env.num_constants());
+        }
+
+        // Write NDJSON export if --export flag
+        if std::env::args().any(|a| a == "--export") {
+            let stdout = io::stdout();
+            let mut writer = lean4_kernel::export_write::NdjsonWriter::new(stdout.lock());
+            writer.write_environment(&env).unwrap_or_else(|e| eprintln!("export error: {}", e));
+            return;
         }
 
         // Write .olean if requested
@@ -259,6 +284,26 @@ fn run_repl(search_paths: &[PathBuf], quiet: bool) {
                 println!("{} : {}", term, ci.type_);
             } else {
                 println!("error: could not check '{}'", term);
+            }
+            continue;
+        }
+
+        // #eval
+        if input.starts_with("#eval ") {
+            let term = input.trim_start_matches("#eval ").trim();
+            let (_, _, cmds) = lean4_kernel::parser::parse_file(&format!("def _ev := {}", term));
+            for cmd in &cmds { let _ = elab.elab_command(cmd); }
+            if let Some(ci) = elab.env.find(&lean4_kernel::name::Name::str("_ev")) {
+                if let Some(val) = ci.get_value() {
+                    match lean4_kernel::eval::eval_expr(val, &elab.env) {
+                        Ok(s) => println!("{}", s),
+                        Err(e) => println!("eval error: {}", e),
+                    }
+                } else {
+                    println!("no value to evaluate");
+                }
+            } else {
+                println!("error: could not elaborate '{}'", term);
             }
             continue;
         }

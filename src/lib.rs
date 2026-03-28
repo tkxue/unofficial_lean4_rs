@@ -16,3 +16,6 @@ pub mod resolve;
 pub mod elaborator;
 pub mod tactic;
 pub mod simp;
+pub mod eval;
+pub mod export;
+pub mod export_write;
